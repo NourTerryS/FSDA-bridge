@@ -1,28 +1,23 @@
 # test_mahalFS.R
 #
-# Covers: mahalFS (Multivariate distance category).
-# No engine/FSDA code is modified by this script — it only calls the
-# existing engine.R functions (start_engine, fsda_call, stop_engine).
+# Covers: mahalFS (Multivariate distance category), via the fsdabridge
+# package's mahalFS() wrapper (R/mahalFS.R), which forwards to fsda_call().
+# No engine/FSDA code is modified by this script.
 # Acceptance tolerance: max absolute difference <= 1e-9 vs. reference.
 
-# --- Path / env setup ----------------------------------------------------
+library(fsdabridge)
+
+# --- Locate repo root (for reading the gold reference CSV) ----------------
 .repo_root = local({
   here = normalizePath(getwd(), winslash = "/", mustWork = TRUE)
   candidates = c(here, file.path(here, ".."), file.path(here, "..", ".."))
   for (c in candidates) {
-    if (file.exists(file.path(c, "code", "fsda_engine", "engine.R"))) {
+    if (dir.exists(file.path(c, "code", "mahalFS", "reference"))) {
       return(normalizePath(c, winslash = "/", mustWork = TRUE))
     }
   }
-  stop("Cannot locate repo root (looking for code/fsda_engine/engine.R)")
+  stop("Cannot locate repo root (looking for code/mahalFS/reference)")
 })
-
-if (!nzchar(Sys.getenv("FSDA_DEV_VENV"))) {
-  default_venv = file.path(.repo_root, "fsda_env", "bin", "python")
-  if (file.exists(default_venv)) Sys.setenv(FSDA_DEV_VENV = default_venv)
-}
-
-source(file.path(.repo_root, "code", "fsda_engine", "engine.R"))
 
 # --- Shared helper functions (copied verbatim, per team standard) --------
 results = list()
@@ -42,7 +37,8 @@ attempt = function(expr) {
 
 # --- One MATLAB session for the whole script ------------------------------
 cat("Starting FSDA engine...\n")
-h = start_engine()
+h = start_engine("mahalFS")
+if (is.null(h)) stop("Engine failed to start")
 cat("Engine started.\n\n")
 
 TOL = 1e-9
@@ -59,7 +55,7 @@ SIGMA = matrix(c(2, 0.5, 0.5, 1), 2, 2)
 ref_path = file.path(.repo_root, "code", "mahalFS", "reference", "mahalFS_r_check.csv")
 gold = read.csv(ref_path)[, "d_fsda"]
 
-res = attempt(as.numeric(fsda_call(h, "mahalFS", Y, MU, SIGMA)))
+res = attempt(as.numeric(mahalFS(h, Y, MU, SIGMA)))
 if (res$ok) {
   diff = max(abs(res$out - gold))
   status = if (diff <= TOL) "PASS" else "FINDING"
@@ -76,14 +72,14 @@ if (res$ok) {
 cat("\n== Section 2: deliberate break attempts ==\n")
 
 # M1 — mismatched dimensions between Y and MU
-res = attempt(fsda_call(h, "mahalFS", Y, c(2.0, 2.0, 2.0), SIGMA))
+res = attempt(mahalFS(h, Y, c(2.0, 2.0, 2.0), SIGMA))
 status = if (!res$ok) "CLEAN-ERROR" else "SILENT-OK"
 record("M1", "MU with wrong dimension (3 instead of 2)", status,
        if (!res$ok) one_line(res$msg) else "ran without error — no dimension check surfaced")
 
 # M2 — non-square SIGMA
 bad_sigma = matrix(c(2, 0.5, 0.5), nrow = 1)
-res = attempt(fsda_call(h, "mahalFS", Y, MU, bad_sigma))
+res = attempt(mahalFS(h, Y, MU, bad_sigma))
 status = if (!res$ok) "CLEAN-ERROR" else "SILENT-OK"
 record("M2", "Non-square SIGMA (1x3 instead of 2x2)", status,
        if (!res$ok) one_line(res$msg) else "ran without error — no shape check surfaced")
@@ -91,7 +87,7 @@ record("M2", "Non-square SIGMA (1x3 instead of 2x2)", status,
 # M3 — NA / missing values in Y
 Y_na = Y
 Y_na[1, 1] = NA
-res = attempt(fsda_call(h, "mahalFS", Y_na, MU, SIGMA))
+res = attempt(mahalFS(h, Y_na, MU, SIGMA))
 if (!res$ok) {
   record("M3", "Y containing NA", "CLEAN-ERROR", one_line(res$msg))
 } else {
@@ -104,14 +100,14 @@ if (!res$ok) {
 }
 
 # M4 — single-row Y (n = 1)
-res = attempt(fsda_call(h, "mahalFS", Y[1, , drop = FALSE], MU, SIGMA))
+res = attempt(mahalFS(h, Y[1, , drop = FALSE], MU, SIGMA))
 status = if (res$ok) "SILENT-OK" else "CLEAN-ERROR"
 record("M4", "Single-observation input (n = 1)", status,
        if (res$ok) one_line(paste("returned:", paste(res$out, collapse = ", "))) else one_line(res$msg))
 
 # M5 — SIGMA not positive-definite (singular)
 bad_sigma2 = matrix(c(1, 1, 1, 1), 2, 2)
-res = attempt(fsda_call(h, "mahalFS", Y, MU, bad_sigma2))
+res = attempt(mahalFS(h, Y, MU, bad_sigma2))
 status = if (!res$ok) "CLEAN-ERROR" else "SILENT-OK"
 record("M5", "Singular (non-invertible) SIGMA", status,
        if (!res$ok) one_line(res$msg) else "ran without error — no positive-definiteness check surfaced")
@@ -121,8 +117,8 @@ record("M5", "Singular (non-invertible) SIGMA", status,
 # ===========================================================================
 cat("\n== Section 3: determinism ==\n")
 
-res1 = attempt(as.numeric(fsda_call(h, "mahalFS", Y, MU, SIGMA)))
-res2 = attempt(as.numeric(fsda_call(h, "mahalFS", Y, MU, SIGMA)))
+res1 = attempt(as.numeric(mahalFS(h, Y, MU, SIGMA)))
+res2 = attempt(as.numeric(mahalFS(h, Y, MU, SIGMA)))
 if (res1$ok && res2$ok) {
   diff = max(abs(res1$out - res2$out))
   record("M6", "Repeat calls return identical results (determinism)", "INFO",
