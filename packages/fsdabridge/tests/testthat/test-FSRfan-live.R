@@ -4,56 +4,22 @@ test_that("FSRfan wrapper agrees with MATLAB/FSDA", {
     "set FSDA_LIVE=1 to run the live MATLAB/FSDA test"
   )
 
-  python = Sys.getenv("FSDA_DEV_VENV")
-  if (!nzchar(python)) {
-    python = "C:/Users/hp/FSDA-bridge/fsda-venv/Scripts/python.exe"
-  }
 
   fsda_root = Sys.getenv("FSDA_ROOT")
   if (!nzchar(fsda_root)) {
     fsda_root = NULL
   }
 
-  h = start_engine("FSRfan", python = python, fsda_root = fsda_root)
+  h = start_engine("FSRfan", fsda_root = fsda_root)
   on.exit(stop_engine(h), add = TRUE)
 
-  find_repo_root = function() {
-    current = normalizePath(getwd(), winslash = "/", mustWork = TRUE)
-
-    repeat {
-      candidate = file.path(
-        current,
-        "code",
-        "FSRfan",
-        "reference",
-        "wool.txt"
-      )
-
-      if (file.exists(candidate)) {
-        return(current)
-      }
-
-      parent = dirname(current)
-
-      if (identical(parent, current)) {
-        stop(
-          "Could not locate repository root containing ",
-          "code/FSRfan/reference/wool.txt"
-        )
-      }
-
-      current = parent
-    }
-  }
-
-  repo_root = find_repo_root()
-
-  reference_dir = file.path(
-    repo_root,
-    "code",
+  reference_dir = system.file(
+    "extdata",
     "FSRfan",
-    "reference"
+    package = "fsdabridge"
   )
+
+  expect_true(nzchar(reference_dir))
 
   wool_path = file.path(reference_dir, "wool.txt")
   score_path = file.path(reference_dir, "FSRfan_Score_check.csv")
