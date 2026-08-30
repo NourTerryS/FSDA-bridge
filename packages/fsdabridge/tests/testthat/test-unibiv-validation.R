@@ -1,5 +1,5 @@
 test_that("unibiv matches MATLAB reference on FSM_Y dataset", {
-  skip_if_not(nzchar(Sys.getenv("FSDA_DEV_VENV")), "MATLAB engine not available")
+  skip_if_not(identical(Sys.getenv("FSDA_LIVE"), "1"), "set FSDA_LIVE=1 to run the live MATLAB/FSDA test")
   Y_path   <- system.file("extdata/FSM/FSM_Y.csv", package = "fsdabridge")
   ref_path <- system.file("extdata/unibiv/fre_MATLAB.csv", package = "fsdabridge")
   skip_if(Y_path == "" || ref_path == "", "fixture/reference not found")
