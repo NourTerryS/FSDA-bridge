@@ -211,8 +211,90 @@ def extract_m_prose(m_path: Path) -> dict:
     bounds = _find_section_bounds(preamble)
     long_desc = _extract_long_desc(preamble, bounds)
     params = _extract_params(preamble, bounds)
-    raise NotImplementedError
+    outputs = []
 
+    output_blocks = _parse_named_blocks(
+        _section_lines(preamble, bounds, "output")
+    )
+
+    for name, fragments in output_blocks.items():
+        description = _join_block(fragments)
+        fields = []
+
+        if (
+            "structure" in description.lower()
+            and "field" in description.lower()
+        ):
+            for fragment in fragments:
+                matches = re.findall(
+                    rf"{re.escape(name)}\.(\w+)\s*=",
+                    fragment
+                )
+
+                for field_name in matches:
+                    field_desc = re.sub(
+                        rf"^{re.escape(name)}\.{re.escape(field_name)}\s*=\s*",
+                          "",
+                          fragment,
+                          ).strip()
+                    fields.append({
+                        "name": field_name,
+                        "desc": field_desc,
+                        })
+
+        outputs.append({
+            "name": name,
+            "short_desc": description,
+            "long_desc": description,
+            "fields": fields,
+        })
+
+    if has_varargout:
+        optional_blocks = _parse_named_blocks(
+            _section_lines(preamble, bounds, "optional_output")
+        )
+
+        for name, fragments in optional_blocks.items():
+            description = _join_block(fragments)
+            outputs.append({
+                "name": name,
+                "short_desc": description,
+                "long_desc": description,
+                "fields": [],
+            })
+
+    see_also = []
+    if "see_also" in bounds:
+        header_line = preamble[bounds["see_also"]]
+        match = re.search(
+            r"See\s+also\s*:?\s*(.*)",
+            header_line,
+            re.IGNORECASE,
+        )
+        if match:
+            see_also = [
+                item.strip()
+                for item in match.group(1).split(",")
+                if item.strip()
+            ]
+
+    references = []
+    if "references" in bounds:
+        reference_lines = _section_lines(
+            preamble, bounds, "references"
+        )
+        for line in reference_lines:
+            stripped = line.strip()
+            if stripped and not stripped.lower().startswith("copyright"):
+                references.append(stripped)
+
+    return {
+        "long_desc": long_desc,
+        "params": params,
+        "outputs": outputs,
+        "see_also": see_also,
+        "references": references,
+    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
