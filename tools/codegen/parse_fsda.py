@@ -86,6 +86,7 @@ _SECTION_ORDER = [
     ("optional_input", re.compile(r"^\s*Optional input arguments\s*:", re.IGNORECASE)),
     ("output", re.compile(r"^\s*Output\s*:", re.IGNORECASE)),
     ("optional_output", re.compile(r"^\s*Optional\s+Output\s*:", re.IGNORECASE)),
+    ("more_about", re.compile(r"^\s*More\s+About\s*:", re.IGNORECASE)),
     ("see_also", re.compile(r"^\s*See\s+also\s*:?", re.IGNORECASE)),
     ("references", re.compile(r"^\s*References\s*:?", re.IGNORECASE)),
 ]
@@ -140,19 +141,22 @@ _NAME_BLOCK_RE = re.compile(r"^\s*(\w+)\s*:\s*(.*)$")
 _NON_NAME_WORDS = {"remark", "example"}
 
 
-def _parse_named_blocks(lines: list) -> dict:
-    """Split a section's body into blocks keyed by leading `name :` lines.
+def _parse_named_blocks(lines: list, pattern=_NAME_BLOCK_RE, exclude=_NON_NAME_WORDS) -> dict:
+    """Split a section's body into blocks keyed by a leading `name :` line.
 
-    Shared by `params` (this task) and `outputs` (Ahmed's part): a struct
-    field line like `out.muopt= ...` has a dot before its `=`, not a bare
-    `:`, so it never starts a new block here - it folds into whatever
-    block is currently open as a continuation line instead.
+    Shared by `params`/top-level `outputs` (default `pattern`, a bare
+    `name :`) and struct `fields` (called with an `out\\.(\\w+)\\s*=`
+    pattern): a struct field line like `out.muopt= ...` has a dot before
+    its `=`, not a bare `:`, so it never starts a new block under the
+    default pattern - it folds into whatever block is currently open as a
+    continuation line instead, which is exactly the split the field-level
+    call needs its own turn at.
     """
     blocks = {}
     current = None
     for raw in lines:
-        match = _NAME_BLOCK_RE.match(raw)
-        if match and match.group(1).lower() not in _NON_NAME_WORDS:
+        match = pattern.match(raw)
+        if match and match.group(1).lower() not in exclude:
             current = match.group(1)
             first = match.group(2).strip()
             blocks[current] = [first] if first else []
@@ -206,7 +210,7 @@ def extract_m_prose(m_path: Path) -> dict:
     if isolated is None:
         return {}
     sig_line, preamble = isolated
-    output_names, has_varargout = _extract_output_names(sig_line)
+    _, has_varargout = _extract_output_names(sig_line)
     preamble = _strip_example_blocks(preamble)
     bounds = _find_section_bounds(preamble)
     long_desc = _extract_long_desc(preamble, bounds)
@@ -218,34 +222,30 @@ def extract_m_prose(m_path: Path) -> dict:
     )
 
     for name, fragments in output_blocks.items():
-        description = _join_block(fragments)
+        first_line = fragments[0] if fragments else ""
+        dot = first_line.find(".")
+        short_desc = (first_line[: dot + 1] if dot != -1 else first_line).strip()
         fields = []
 
         if (
-            "structure" in description.lower()
-            and "field" in description.lower()
+            "structure" in short_desc.lower()
+            and "field" in short_desc.lower()
         ):
-            for fragment in fragments:
-                matches = re.findall(
-                    rf"{re.escape(name)}\.(\w+)\s*=",
-                    fragment
-                )
-
-                for field_name in matches:
-                    field_desc = re.sub(
-                        rf"^{re.escape(name)}\.{re.escape(field_name)}\s*=\s*",
-                          "",
-                          fragment,
-                          ).strip()
-                    fields.append({
-                        "name": field_name,
-                        "desc": field_desc,
-                        })
+            field_re = re.compile(rf"^\s*{re.escape(name)}\.(\w+)\s*=\s*(.*)$")
+            field_blocks = _parse_named_blocks(fragments, pattern=field_re, exclude=frozenset())
+            for field_name, field_fragments in field_blocks.items():
+                fields.append({
+                    "name": field_name,
+                    "desc": _join_block(field_fragments),
+                })
+            output_long_desc = short_desc
+        else:
+            output_long_desc = _join_block(fragments)
 
         outputs.append({
             "name": name,
-            "short_desc": description,
-            "long_desc": description,
+            "short_desc": short_desc,
+            "long_desc": output_long_desc,
             "fields": fields,
         })
 
@@ -283,10 +283,29 @@ def extract_m_prose(m_path: Path) -> dict:
         reference_lines = _section_lines(
             preamble, bounds, "references"
         )
+        # Everything from "Copyright <year>" onward is trailing boilerplate
+        # (Written by FSDA team, the repeated docsearchFS link, the
+        # $LastChangedDate$ stamp) with no header of its own - cut there.
+        copyright_idx = next(
+            (i for i, line in enumerate(reference_lines)
+             if line.strip().lower().startswith("copyright")),
+            len(reference_lines),
+        )
+        reference_lines = reference_lines[:copyright_idx]
+
+        # Citations are separated by blank lines in the source and often
+        # wrap across several lines - join each citation's lines into one
+        # entry instead of emitting one list item per physical line.
+        current = []
         for line in reference_lines:
             stripped = line.strip()
-            if stripped and not stripped.lower().startswith("copyright"):
-                references.append(stripped)
+            if stripped:
+                current.append(stripped)
+            elif current:
+                references.append(_join_block(current))
+                current = []
+        if current:
+            references.append(_join_block(current))
 
     return {
         "long_desc": long_desc,
@@ -295,6 +314,7 @@ def extract_m_prose(m_path: Path) -> dict:
         "see_also": see_also,
         "references": references,
     }
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
