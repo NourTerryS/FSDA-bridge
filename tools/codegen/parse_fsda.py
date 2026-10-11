@@ -220,7 +220,7 @@ _SECTION_ORDER = [
     ("optional_input", re.compile(r"^\s*Optional input arguments\s*:", re.IGNORECASE)),
     ("output", re.compile(r"^\s*Output\s*:", re.IGNORECASE)),
     ("optional_output", re.compile(r"^\s*Optional\s+Output\s*:", re.IGNORECASE)),
-    ("more_about", re.compile(r"^\s*More\s+About\b.*:", re.IGNORECASE)),
+    ("more_about", re.compile(r"^\s*More\s+About\s*:", re.IGNORECASE)),
     ("see_also", re.compile(r"^\s*See\s+also\s*:?", re.IGNORECASE)),
     ("references", re.compile(r"^\s*References\s*:?", re.IGNORECASE)),
 ]
@@ -361,9 +361,37 @@ def _extract_references(lines: list, bounds: dict) -> list:
     return references
 
 
+def _split_output_fields(output_name: str, fragments: list, field_re) -> dict:
+    """Like `_parse_named_blocks`, but a repeated field name continues the
+    existing field (with a warning) instead of restarting it.
+    """
+    blocks = {}
+    current = None
+    for raw in fragments:
+        match = field_re.match(raw)
+        if match:
+            current = match.group(1)
+            first = match.group(2).strip()
+            if current in blocks:
+                log.warning(
+                    "field %s repeats in output %s; treating as continuation",
+                    current,
+                    output_name,
+                )
+                if first:
+                    blocks[current].append(first)
+            else:
+                blocks[current] = [first] if first else []
+        elif current is not None:
+            stripped = raw.strip()
+            if stripped:
+                blocks[current].append(stripped)
+    return blocks
+
+
 def _build_output_entry(name: str, fragments: list) -> dict:
     field_re = re.compile(rf"^\s*{re.escape(name)}\.(\w+)\s*=\s*(.*)$")
-    field_blocks = _parse_named_blocks(fragments, pattern=field_re, exclude=frozenset())
+    field_blocks = _split_output_fields(name, fragments, field_re)
     fields = [
         {"name": field_name, "desc": _join_block(field_fragments)}
         for field_name, field_fragments in field_blocks.items()
